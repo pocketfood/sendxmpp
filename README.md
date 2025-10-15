@@ -21,6 +21,9 @@ sudo apt install -y build-essential pkg-config libstrophe-dev libexpat1-dev libm
 # build
 make
 
+# GCC Build
+gcc sendxmpp.c $(pkg-config --cflags --libs libstrophe) -Os -ffunction-sections -fdata-sections -Wl,--gc-sections -s -o sendxmpp
+
 # configure
 cat > .env <<'EOF'
 JID=user@example.com/res
