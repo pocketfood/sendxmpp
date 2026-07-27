@@ -1,10 +1,15 @@
 --- a/src/conn.c
 +++ b/src/conn.c
-@@
+@@ -1696,1 +1696,1 @@
 -    if (conn->sm_state->sm_enabled)
 +    if (conn->sm_state && conn->sm_state->sm_enabled)
-         conn->sm_state->sm_handled_nr++;
-@@
+@@ -2040,1 +2040,2 @@
 -    if (!(owner & XMPP_QUEUE_SM) && conn->sm_state->sm_enabled &&
 +    if (!(owner & XMPP_QUEUE_SM) && conn->sm_state &&
 +        conn->sm_state->sm_enabled &&
+--- a/src/event.c
++++ b/src/event.c
+@@ -156,1 +156,2 @@
+-            if (!(tsq->owner & XMPP_QUEUE_SM) && conn->sm_state->sm_enabled) {
++            if (!(tsq->owner & XMPP_QUEUE_SM) && conn->sm_state &&
++                conn->sm_state->sm_enabled) {

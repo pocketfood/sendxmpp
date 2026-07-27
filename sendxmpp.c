@@ -48,6 +48,9 @@ typedef struct {
     bool message_handler_registered;
     bool one_shot_sent;
     bool connect_failed;
+    bool awaiting_pubsub_result;
+    char pubsub_iq_id[64];
+    time_t pubsub_deadline;
     const char *body;
     bool body_allocated;
     char *append_buf;
@@ -338,16 +341,15 @@ static void make_iq_id(char *buf, size_t size)
              (unsigned long)getpid(), ++counter);
 }
 
-static char *build_pubsub_publish_iq(const app_t *app, const char *payload)
+static char *build_pubsub_publish_iq(const app_t *app, const char *payload,
+                                     const char *id)
 {
-    char id[64];
     char *from = xml_escape(app->from);
     char *to = xml_escape(app->pubsub_service);
     char *node = xml_escape(app->pubsub_node);
     char *item = xml_escape(app->pubsub_item);
     strbuf_t out = {0};
 
-    make_iq_id(id, sizeof(id));
     if (!from || !to || !node || !item ||
         sb_appendf(&out,
             "<iq type='set' from='%s' to='%s' id='%s'>"
@@ -359,6 +361,33 @@ static char *build_pubsub_publish_iq(const app_t *app, const char *payload)
     }
     free(from); free(to); free(node); free(item);
     return out.buf;
+}
+
+static int pubsub_response_handler(xmpp_conn_t *const conn,
+                                   xmpp_stanza_t *const stanza,
+                                   void *const userdata)
+{
+    app_t *app = userdata;
+    xmpp_ctx_t *ctx = xmpp_conn_get_context(conn);
+    const char *type = xmpp_stanza_get_type(stanza);
+    const char *id = xmpp_stanza_get_id(stanza);
+
+    app->awaiting_pubsub_result = false;
+    if (type && strcmp(type, "result") == 0) {
+        fprintf(stdout, "PUBSUB\tresult\t%s\n", id ? id : "");
+        fflush(stdout);
+    } else {
+        char *xml = NULL;
+        size_t xml_len = 0;
+        app->connect_failed = true;
+        fprintf(stderr, "PUBSUB\terror\t%s\n", id ? id : "");
+        if (xmpp_stanza_to_text(stanza, &xml, &xml_len) == XMPP_EOK && xml) {
+            fprintf(stderr, "%s\n", xml);
+            xmpp_free(ctx, xml);
+        }
+    }
+    if (!app->fifo) xmpp_disconnect(conn);
+    return 0;
 }
 
 static int send_pubsub(xmpp_conn_t *conn, app_t *app, const char *text)
@@ -379,9 +408,14 @@ static int send_pubsub(xmpp_conn_t *conn, app_t *app, const char *text)
         if (!owned_payload) return -1;
         payload = owned_payload;
     }
-    iq = build_pubsub_publish_iq(app, payload);
+    make_iq_id(app->pubsub_iq_id, sizeof(app->pubsub_iq_id));
+    iq = build_pubsub_publish_iq(app, payload, app->pubsub_iq_id);
     free(owned_payload);
     if (!iq) return -1;
+    xmpp_id_handler_add(conn, pubsub_response_handler,
+                        app->pubsub_iq_id, app);
+    app->awaiting_pubsub_result = true;
+    if (!app->fifo) app->pubsub_deadline = time(NULL) + 15;
     xmpp_send_raw_string(conn, "%s", iq);
     free(iq);
     return 0;
@@ -741,9 +775,16 @@ int main(int argc, char **argv)
                 app.connect_failed = true;
             }
             app.one_shot_sent = true;
+            if (!app.pubsub_node) xmpp_disconnect(conn);
+        }
+        if (app.connected && !app.fifo && app.awaiting_pubsub_result &&
+            time(NULL) >= app.pubsub_deadline) {
+            fprintf(stderr, "Timed out waiting for PubSub IQ response\n");
+            app.awaiting_pubsub_result = false;
+            app.connect_failed = true;
             xmpp_disconnect(conn);
         }
-        if (app.connect_failed || (app.one_shot_sent && !app.connected)) break;
+        if (!app.connected && (app.connect_failed || app.one_shot_sent)) break;
         if (app.fifo && app.connected) {
             struct pollfd input = { STDIN_FILENO, POLLIN, 0 };
             int ready = poll(&input, 1, 0);
@@ -761,6 +802,7 @@ int main(int argc, char **argv)
                 if (send_line(conn, ctx, &app, line) != 0) {
                     fprintf(stderr, "Failed to build outgoing stanza\n");
                     app.connect_failed = true;
+                    xmpp_disconnect(conn);
                 }
             }
         }

@@ -82,9 +82,10 @@ cc sendxmpp.c $(pkg-config --cflags --libs libstrophe) \
 ### libstrophe Stream Management compatibility
 
 Some libstrophe builds dereference client Stream Management state during
-component receive and send paths, although XEP-0114 component connections may
-not have that state. The symptom is a segmentation fault immediately after a
-successful component handshake or while sending the first stanza.
+component receive, send, and event-queue paths, although XEP-0114 component
+connections may not have that state. The symptom is a segmentation fault
+immediately after a successful component handshake or while sending the first
+stanza.
 
 The repository includes
 `patches/libstrophe-xep0114-sm-null.patch`, which adds the two required null
@@ -245,6 +246,17 @@ printf '%s\n' 'example record' |
   ./sendxmpp --pubsub-service '<pubsub-service-jid>' \
     --pubsub '<pubsub-node>'
 ```
+
+For a one-shot publish, the program waits up to 15 seconds for the matching IQ
+response. Success is reported as:
+
+```text
+PUBSUB	result	<iq-id>
+```
+
+An IQ error is reported as `PUBSUB error` followed by the returned error
+stanza. A timeout exits unsuccessfully instead of assuming that queuing the IQ
+meant the server accepted it.
 
 Continuous publishing:
 
