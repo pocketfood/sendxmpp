@@ -1,0 +1,10 @@
+--- a/src/conn.c
++++ b/src/conn.c
+@@
+-    if (conn->sm_state->sm_enabled)
++    if (conn->sm_state && conn->sm_state->sm_enabled)
+         conn->sm_state->sm_handled_nr++;
+@@
+-    if (!(owner & XMPP_QUEUE_SM) && conn->sm_state->sm_enabled &&
++    if (!(owner & XMPP_QUEUE_SM) && conn->sm_state &&
++        conn->sm_state->sm_enabled &&
