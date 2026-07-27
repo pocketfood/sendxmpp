@@ -45,6 +45,7 @@ typedef struct {
 
     bool connected;
     bool ever_connected;
+    bool message_handler_registered;
     bool one_shot_sent;
     bool connect_failed;
     const char *body;
@@ -472,7 +473,6 @@ static void connection_handler(xmpp_conn_t *const conn,
         app->connected = true;
         app->ever_connected = true;
         fprintf(stderr, "Component authenticated as %s\n", app->domain);
-        xmpp_handler_add(conn, message_handler, NULL, "message", NULL, app);
         if (!app->fifo && app->body && !app->one_shot_sent) {
             if (send_line(conn, ctx, app, app->body) != 0) {
                 fprintf(stderr, "Failed to build outgoing stanza\n");
@@ -733,6 +733,16 @@ int main(int argc, char **argv)
 
     while (!stop_requested) {
         xmpp_run_once(ctx, 50);
+        /*
+         * Do not add a stanza handler from connection_handler(). During an
+         * XEP-0114 handshake libstrophe invokes that callback while it is
+         * traversing its internal stanza-handler collection. In libstrophe
+         * 0.14, mutating that collection there can invalidate the traversal.
+         */
+        if (app.connected && !app.message_handler_registered) {
+            xmpp_handler_add(conn, message_handler, NULL, "message", NULL, &app);
+            app.message_handler_registered = true;
+        }
         if (app.connect_failed || (app.one_shot_sent && !app.connected)) break;
         if (app.fifo && app.connected) {
             struct pollfd input = { STDIN_FILENO, POLLIN, 0 };
