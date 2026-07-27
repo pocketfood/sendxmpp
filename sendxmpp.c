@@ -473,14 +473,6 @@ static void connection_handler(xmpp_conn_t *const conn,
         app->connected = true;
         app->ever_connected = true;
         fprintf(stderr, "Component authenticated as %s\n", app->domain);
-        if (!app->fifo && app->body && !app->one_shot_sent) {
-            if (send_line(conn, ctx, app, app->body) != 0) {
-                fprintf(stderr, "Failed to build outgoing stanza\n");
-                app->connect_failed = true;
-            }
-            app->one_shot_sent = true;
-            xmpp_disconnect(conn);
-        }
     } else {
         app->connected = false;
         if (!app->ever_connected) {
@@ -742,6 +734,14 @@ int main(int argc, char **argv)
         if (app.connected && !app.message_handler_registered) {
             xmpp_handler_add(conn, message_handler, NULL, "message", NULL, &app);
             app.message_handler_registered = true;
+        }
+        if (app.connected && !app.fifo && app.body && !app.one_shot_sent) {
+            if (send_line(conn, ctx, &app, app.body) != 0) {
+                fprintf(stderr, "Failed to build outgoing stanza\n");
+                app.connect_failed = true;
+            }
+            app.one_shot_sent = true;
+            xmpp_disconnect(conn);
         }
         if (app.connect_failed || (app.one_shot_sent && !app.connected)) break;
         if (app.fifo && app.connected) {
