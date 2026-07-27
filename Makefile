@@ -1,5 +1,5 @@
 PKG ?= pkg-config
-CFLAGS ?= -Os -ffunction-sections -fdata-sections
+CFLAGS ?= -O2 -Wall -Wextra -ffunction-sections -fdata-sections
 LDFLAGS ?= -Wl,--gc-sections -s
 LIBS := $(shell $(PKG) --cflags --libs libstrophe)
 
