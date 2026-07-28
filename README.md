@@ -88,7 +88,7 @@ immediately after a successful component handshake or while sending the first
 stanza.
 
 The repository includes
-`patches/libstrophe-xep0114-sm-null.patch`, which adds the two required null
+`patches/libstrophe-xep0114-sm-null.patch`, which adds the three required null
 guards. Apply it to the matching libstrophe source tree before building that
 library:
 
@@ -270,6 +270,30 @@ By default, publishes use item ID `main`, so each publish replaces that item.
 `--append` accumulates text received during the current process and republishes
 the accumulated value. It does not fetch existing node content. The PubSub
 service must grant the component identity permission to publish.
+
+### Publish CPU load every five seconds
+
+The following loop reads Linux load averages from `/proc/loadavg` and updates
+one PubSub item every five seconds:
+
+```sh
+while true; do
+  read -r load1 load5 load15 _ < /proc/loadavg
+
+  ./sendxmpp \
+    --pubsub-service '<pubsub-service-jid>' \
+    --pubsub '<pubsub-node>' \
+    --item 'cpu-load' \
+    "host=$(hostname) load1=${load1} load5=${load5} load15=${load15}"
+
+  sleep 5
+done
+```
+
+The fixed item ID `cpu-load` updates the same entry on every publish. Stop the
+loop with `Ctrl+C`. Each accepted update prints
+`PUBSUB result <iq-id>` as tab-separated fields. The PubSub node must grant the
+configured component domain publisher permission.
 
 ## CLI summary
 
