@@ -109,6 +109,26 @@ make clean
 make
 ```
 
+The Makefile embeds the libstrophe library directory reported by `pkg-config`
+as a runtime search path in `sendxmpp`. This keeps a locally patched
+libstrophe selected after reboot without requiring `LD_LIBRARY_PATH` whenever
+the program runs. Keep `PKG_CONFIG_PATH` configured when rebuilding so
+`pkg-config` selects the intended installation:
+
+```sh
+printf '%s\n' \
+  'export PKG_CONFIG_PATH="<local-prefix>/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"' \
+  >> ~/.profile
+```
+
+Log out and back in after changing `~/.profile`, or load it in the current
+shell with `. ~/.profile`. Verify the resulting executable with:
+
+```sh
+readelf -d ./sendxmpp | grep -E 'RPATH|RUNPATH'
+ldd ./sendxmpp | grep libstrophe
+```
+
 Confirm which library will be loaded:
 
 ```sh
