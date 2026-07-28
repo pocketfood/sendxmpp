@@ -28,6 +28,7 @@ typedef struct {
     const char *to;
     int fifo;
     int debug;
+    int muc;
 
     /* Optional PubSub settings retained from the client version. */
     const char *pubsub_node;
@@ -46,6 +47,10 @@ typedef struct {
     bool connected;
     bool ever_connected;
     bool message_handler_registered;
+    bool presence_handler_registered;
+    bool muc_join_sent;
+    bool muc_joined;
+    time_t muc_deadline;
     bool one_shot_sent;
     bool connect_failed;
     bool awaiting_pubsub_result;
@@ -427,16 +432,29 @@ static int send_message(xmpp_conn_t *conn, xmpp_ctx_t *ctx,
     xmpp_stanza_t *message = NULL;
     xmpp_stanza_t *body = NULL;
     xmpp_stanza_t *body_text = NULL;
+    char *muc_room = NULL;
+    const char *destination = app->to;
     int rc = -1;
 
+    if (app->muc) {
+        const char *slash = strrchr(app->to, '/');
+        size_t room_length;
+        if (!slash || slash == app->to || !slash[1]) goto done;
+        room_length = (size_t)(slash - app->to);
+        muc_room = malloc(room_length + 1);
+        if (!muc_room) goto done;
+        memcpy(muc_room, app->to, room_length);
+        muc_room[room_length] = '\0';
+        destination = muc_room;
+    }
     message = xmpp_stanza_new(ctx);
     body = xmpp_stanza_new(ctx);
     body_text = xmpp_stanza_new(ctx);
     if (!message || !body || !body_text) goto done;
     if (xmpp_stanza_set_name(message, "message") != XMPP_EOK ||
-        xmpp_stanza_set_type(message, "chat") != XMPP_EOK ||
+        xmpp_stanza_set_type(message, app->muc ? "groupchat" : "chat") != XMPP_EOK ||
         xmpp_stanza_set_attribute(message, "from", app->from) != XMPP_EOK ||
-        xmpp_stanza_set_attribute(message, "to", app->to) != XMPP_EOK ||
+        xmpp_stanza_set_attribute(message, "to", destination) != XMPP_EOK ||
         xmpp_stanza_set_name(body, "body") != XMPP_EOK ||
         xmpp_stanza_set_text(body_text, text ? text : "") != XMPP_EOK ||
         xmpp_stanza_add_child(body, body_text) != XMPP_EOK ||
@@ -448,6 +466,32 @@ done:
     if (body_text) xmpp_stanza_release(body_text);
     if (body) xmpp_stanza_release(body);
     if (message) xmpp_stanza_release(message);
+    free(muc_room);
+    return rc;
+}
+
+static int send_muc_join(xmpp_conn_t *conn, xmpp_ctx_t *ctx,
+                         const app_t *app)
+{
+    xmpp_stanza_t *presence = NULL;
+    xmpp_stanza_t *x = NULL;
+    int rc = -1;
+
+    presence = xmpp_stanza_new(ctx);
+    x = xmpp_stanza_new(ctx);
+    if (!presence || !x) goto done;
+    if (xmpp_stanza_set_name(presence, "presence") != XMPP_EOK ||
+        xmpp_stanza_set_attribute(presence, "from", app->from) != XMPP_EOK ||
+        xmpp_stanza_set_attribute(presence, "to", app->to) != XMPP_EOK ||
+        xmpp_stanza_set_name(x, "x") != XMPP_EOK ||
+        xmpp_stanza_set_ns(x, "http://jabber.org/protocol/muc") != XMPP_EOK ||
+        xmpp_stanza_add_child(presence, x) != XMPP_EOK)
+        goto done;
+    xmpp_send(conn, presence);
+    rc = 0;
+done:
+    if (x) xmpp_stanza_release(x);
+    if (presence) xmpp_stanza_release(presence);
     return rc;
 }
 
@@ -491,6 +535,33 @@ static int message_handler(xmpp_conn_t *const conn,
     fputc('\n', stdout);
     fflush(stdout);
     if (body) xmpp_free(ctx, body);
+    return 1;
+}
+
+static int muc_presence_handler(xmpp_conn_t *const conn,
+                                xmpp_stanza_t *const stanza,
+                                void *const userdata)
+{
+    app_t *app = userdata;
+    xmpp_ctx_t *ctx = xmpp_conn_get_context(conn);
+    const char *from = xmpp_stanza_get_attribute(stanza, "from");
+    const char *type = xmpp_stanza_get_type(stanza);
+
+    if (!from || strcmp(from, app->to) != 0) return 1;
+    if (type && strcmp(type, "error") == 0) {
+        char *xml = NULL;
+        size_t xml_len = 0;
+        fprintf(stderr, "MUC join failed for %s\n", app->to);
+        if (xmpp_stanza_to_text(stanza, &xml, &xml_len) == XMPP_EOK && xml) {
+            fprintf(stderr, "%s\n", xml);
+            xmpp_free(ctx, xml);
+        }
+        app->connect_failed = true;
+        xmpp_disconnect(conn);
+    } else if (!type || strcmp(type, "available") == 0) {
+        app->muc_joined = true;
+        fprintf(stderr, "Joined conference as %s\n", app->to);
+    }
     return 1;
 }
 
@@ -579,6 +650,7 @@ static void usage(const char *program)
         "  --secret <secret>   Shared component secret (COMPONENT_SECRET)\n"
         "  --from <jid>        Component-owned sender (COMPONENT_FROM)\n"
         "  --to <jid>          Destination address (COMPONENT_TO)\n"
+        "  --muc               Join --to as <room-jid>/<nickname>, then send\n"
         "  --fifo              Read and send stdin one line at a time\n"
         "  --config <file>     Load KEY=VALUE settings\n"
         "  --debug             Enable libstrophe debug logging\n"
@@ -635,6 +707,8 @@ int main(int argc, char **argv)
     app.secret = env_value("COMPONENT_SECRET");
     app.from = env_value("COMPONENT_FROM");
     app.to = env_value("COMPONENT_TO");
+    app.muc = env_value("COMPONENT_MUC") ?
+              atoi(env_value("COMPONENT_MUC")) != 0 : 0;
     app.pubsub_service = env_value("PUBSUB_SERVICE");
     app.pubsub_node = env_value("PUBSUB_NODE");
     app.pubsub_item = env_value("PUBSUB_ITEM");
@@ -672,6 +746,7 @@ int main(int argc, char **argv)
         else if (!strcmp(arg, "--secret")) { OPTION_VALUE(); app.secret = value; }
         else if (!strcmp(arg, "--from")) { OPTION_VALUE(); app.from = value; }
         else if (!strcmp(arg, "--to")) { OPTION_VALUE(); app.to = value; }
+        else if (!strcmp(arg, "--muc")) app.muc = 1;
         else if (!strcmp(arg, "--fifo")) app.fifo = 1;
         else if (!strcmp(arg, "--debug")) app.debug = 1;
         else if (!strcmp(arg, "--help")) { usage(argv[0]); return 0; }
@@ -728,6 +803,13 @@ int main(int argc, char **argv)
         rc = 2;
         goto cleanup;
     }
+    if (app.muc && (!app.to || !strchr(app.to, '/') ||
+                    !strchr(app.to, '/')[1])) {
+        fprintf(stderr,
+                "--muc requires --to <room-jid>/<nickname>\n");
+        rc = 2;
+        goto cleanup;
+    }
     if (app.pubsub_append && app.pubsub_raw) {
         fprintf(stderr, "--append cannot be combined with --raw-xml\n");
         rc = 2;
@@ -769,7 +851,29 @@ int main(int argc, char **argv)
             xmpp_handler_add(conn, message_handler, NULL, "message", NULL, &app);
             app.message_handler_registered = true;
         }
-        if (app.connected && !app.fifo && app.body && !app.one_shot_sent) {
+        if (app.connected && app.muc && !app.presence_handler_registered) {
+            xmpp_handler_add(conn, muc_presence_handler,
+                             NULL, "presence", NULL, &app);
+            app.presence_handler_registered = true;
+        }
+        if (app.connected && app.muc && app.presence_handler_registered &&
+            !app.muc_join_sent) {
+            if (send_muc_join(conn, ctx, &app) != 0) {
+                fprintf(stderr, "Failed to build MUC join presence\n");
+                app.connect_failed = true;
+                xmpp_disconnect(conn);
+            }
+            app.muc_join_sent = true;
+            app.muc_deadline = time(NULL) + 15;
+        }
+        if (app.connected && app.muc && app.muc_join_sent &&
+            !app.muc_joined && time(NULL) >= app.muc_deadline) {
+            fprintf(stderr, "Timed out waiting for conference join response\n");
+            app.connect_failed = true;
+            xmpp_disconnect(conn);
+        }
+        if (app.connected && !app.fifo && app.body && !app.one_shot_sent &&
+            (!app.muc || app.muc_joined)) {
             if (send_line(conn, ctx, &app, app.body) != 0) {
                 fprintf(stderr, "Failed to build outgoing stanza\n");
                 app.connect_failed = true;
@@ -785,7 +889,7 @@ int main(int argc, char **argv)
             xmpp_disconnect(conn);
         }
         if (!app.connected && (app.connect_failed || app.one_shot_sent)) break;
-        if (app.fifo && app.connected) {
+        if (app.fifo && app.connected && (!app.muc || app.muc_joined)) {
             struct pollfd input = { STDIN_FILENO, POLLIN, 0 };
             int ready = poll(&input, 1, 0);
             if (ready > 0 && (input.revents & POLLIN)) {

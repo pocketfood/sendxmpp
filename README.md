@@ -247,6 +247,23 @@ tail -f <input-file> |
 
 Stop the producer or press `Ctrl+C` to terminate the component.
 
+## Conference messages
+
+A component must join an XEP-0045 conference as an occupant before it can send
+messages to the room. Use `--muc` and provide the room plus a nickname in
+`--to`:
+
+```sh
+./sendxmpp --muc \
+  --to '<room-name>@<conference-service>/<nickname>' \
+  'Hello from the external component'
+```
+
+The program sends join presence, waits for the room to confirm the occupant,
+and then sends a `groupchat` message to the bare room JID. The component-owned
+`from` address must still match `COMPONENT_DOMAIN`. A room may independently
+require membership, a password, or permission to speak.
+
 ## Optional PubSub publishing
 
 PubSub configuration is separate from direct messaging:
@@ -324,6 +341,7 @@ configured component domain publisher permission.
 --secret <secret>   Shared component secret
 --from <jid>        Component-owned sender
 --to <jid>          Destination address
+--muc               Join --to as a conference occupant before sending
 --fifo              Read stdin one line at a time
 --config <file>     Load KEY=VALUE settings
 --debug             Enable libstrophe debug logging
