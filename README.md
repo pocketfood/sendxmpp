@@ -264,6 +264,49 @@ and then sends a `groupchat` message to the bare room JID. The component-owned
 `from` address must still match `COMPONENT_DOMAIN`. A room may independently
 require membership, a password, or permission to speak.
 
+Enable conference mode from the configuration file instead of the command
+line:
+
+```env
+COMPONENT_FROM=<component-domain>
+COMPONENT_TO=<room-name>@<conference-service>/<nickname>
+COMPONENT_MUC=1
+```
+
+Then send a one-shot room message:
+
+```sh
+./sendxmpp 'Example conference message'
+```
+
+To forward a text stream into the same room, keep one component connection
+open and publish each input line as a separate groupchat message:
+
+```sh
+tail -f <input-file> |
+  ./sendxmpp --muc \
+    --to '<room-name>@<conference-service>/<nickname>' \
+    --fifo
+```
+
+For a members-only room, grant the exact `COMPONENT_FROM` identity the
+`member` affiliation in the conference room configuration. This is separate
+from PubSub affiliations. A rejection containing `registration-required` and
+`Membership is required to enter this room` means the room has not granted
+that sender membership.
+
+If a room-management interface requires a user-shaped JID, use an address
+owned by the component domain:
+
+```env
+COMPONENT_DOMAIN=<component-domain>
+COMPONENT_FROM=<localpart>@<component-domain>
+```
+
+Grant that exact `COMPONENT_FROM` address membership. Its domain must remain
+the configured component domain when the XEP-0114 listener enforces sender
+address checking.
+
 ## Optional PubSub publishing
 
 PubSub configuration is separate from direct messaging:
